@@ -22,16 +22,3 @@ This app runs entirely in the browser — no backend, no dependencies. Just open
 3. Click **"Question file (.csv or .txt)"**.
 4. Select your MQF CSV file (with header `QUESTION,ANSWER`).
 5. Go through the quiz, checking answers and moving to the next question.
-
-## GitHub Pages (optional)
-
-To host this as a simple web app via GitHub Pages:
-
-1. Make sure this repository has `index.html` at the root.
-2. In GitHub, go to **Settings → Pages**.
-3. Under **Source**, choose:
-   - Branch: `main`
-   - Folder: `/root`
-4. Save. GitHub will give you a public URL for the app.
-
-When `index.html` is present, the GitHub Pages URL will open the quiz app directly.
