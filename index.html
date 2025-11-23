@@ -54,7 +54,7 @@
       border-radius: 12px;
       background: rgba(15, 23, 42, 0.9);
       border: 1px solid rgba(148, 163, 184, 0.35);
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
     }
 
     .upload-row label {
@@ -67,6 +67,30 @@
     input[type="file"] {
       font-size: 0.85rem;
       max-width: 100%;
+    }
+
+    input[type="text"] {
+      font-size: 0.85rem;
+      padding: 0.25rem 0.45rem;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      min-width: 160px;
+    }
+
+    input[type="text"]::placeholder {
+      color: #6b7280;
+    }
+
+    select {
+      font-size: 0.85rem;
+      padding: 0.25rem 0.4rem;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      min-width: 160px;
     }
 
     .format-help {
@@ -282,16 +306,32 @@
   <div class="app">
     <header>
       <h1>MQF Quiz Builder</h1>
-      <p class="subtitle">Upload your MQF CSV and study it as a multiple-choice quiz.</p>
+      <p class="subtitle">
+        Upload your MQF CSV, save it in this browser, and study it as a multiple-choice quiz.
+        You can switch between saved quizzes using the dropdown.
+      </p>
     </header>
 
+    <!-- Saved quizzes row -->
+    <section class="upload-row">
+      <label for="savedQuizSelect">Saved quizzes:</label>
+      <select id="savedQuizSelect">
+        <option value="">No saved quizzes yet</option>
+      </select>
+      <button id="loadSavedBtn" type="button" class="secondary" disabled>Load</button>
+      <button id="deleteSavedBtn" type="button" class="secondary" disabled>Delete</button>
+    </section>
+
+    <!-- Upload row -->
     <section class="upload-row">
       <label for="fileInput">Question file (.csv or .txt):</label>
       <input type="file" id="fileInput" accept=".txt,.csv" />
+      <input type="text" id="quizNameInput" placeholder="Optional: name this quiz" />
       <div class="format-help">
-        This is tuned for files with header <code>QUESTION,ANSWER</code> like your MQF export.<br />
-        It also still supports simple lines like:<br />
-        <code>Question, Option A, Option B, Option C, Option D, Correct</code>
+        Tuned for files with header <code>QUESTION,ANSWER</code> like your MQF export.<br />
+        It also supports simple lines like:<br />
+        <code>Question, Option A, Option B, Option C, Option D, Correct</code><br />
+        Uploaded quizzes are saved in this browser and appear in the dropdown above.
       </div>
     </section>
 
@@ -307,7 +347,7 @@
 
     <section class="quiz-card" id="quizCard">
       <div id="emptyState" class="empty-state">
-        Upload your MQF CSV to get started. Questions will be shuffled each time.
+        Upload your MQF CSV to get started, or pick a saved quiz from the dropdown. Questions will be shuffled each time.
       </div>
 
       <div id="quizContent" style="display:none;">
@@ -324,7 +364,7 @@
             <button id="nextBtn" type="button" class="secondary">Next question →</button>
           </div>
           <div class="hint">
-            Tip: re-upload the same file any time to reshuffle questions.
+            Tip: re-upload the same file any time to refresh and reshuffle, or reuse saved quizzes from the dropdown.
           </div>
         </div>
       </div>
@@ -333,6 +373,7 @@
 
   <script>
     const fileInput = document.getElementById('fileInput');
+    const quizNameInput = document.getElementById('quizNameInput');
     const questionCountEl = document.getElementById('questionCount');
     const fileStatusEl = document.getElementById('fileStatus');
     const progressSummaryEl = document.getElementById('progressSummary');
@@ -349,11 +390,19 @@
     const checkBtn = document.getElementById('checkBtn');
     const nextBtn = document.getElementById('nextBtn');
 
+    const savedQuizSelect = document.getElementById('savedQuizSelect');
+    const loadSavedBtn = document.getElementById('loadSavedBtn');
+    const deleteSavedBtn = document.getElementById('deleteSavedBtn');
+
     let questions = [];
     let currentIndex = 0;
     let score = 0;
     let answeredCount = 0;
     let hasAnsweredCurrent = false;
+
+    const STORAGE_KEY = 'quizBuilder_savedQuizzes_v1';
+    let savedQuizzes = loadSavedQuizzes();
+    let currentQuizId = null;
 
     function shuffle(array) {
       for (let i = array.length - 1; i > 0; i--) {
@@ -361,6 +410,76 @@
         [array[i], array[j]] = [array[j], array[i]];
       }
       return array;
+    }
+
+    function cloneQuestions(qs) {
+      return qs.map(q => ({
+        question: q.question,
+        options: Array.isArray(q.options) ? [...q.options] : [],
+        correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0
+      }));
+    }
+
+    function loadSavedQuizzes() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (e) {
+        console.warn('Could not load saved quizzes:', e);
+        return {};
+      }
+    }
+
+    function saveSavedQuizzes() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(savedQuizzes));
+      } catch (e) {
+        console.warn('Could not save quizzes:', e);
+      }
+    }
+
+    function refreshSavedQuizSelect() {
+      const ids = Object.keys(savedQuizzes);
+      savedQuizSelect.innerHTML = '';
+
+      if (!ids.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No saved quizzes yet';
+        savedQuizSelect.appendChild(opt);
+        loadSavedBtn.disabled = true;
+        deleteSavedBtn.disabled = true;
+        return;
+      }
+
+      ids.sort((a, b) => {
+        const nameA = (savedQuizzes[a].name || '').toLowerCase();
+        const nameB = (savedQuizzes[b].name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      let hasSelection = false;
+
+      ids.forEach(id => {
+        const quiz = savedQuizzes[id];
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = quiz.name || 'Untitled quiz';
+        if (id === currentQuizId) {
+          opt.selected = true;
+          hasSelection = true;
+        }
+        savedQuizSelect.appendChild(opt);
+      });
+
+      if (!hasSelection) {
+        savedQuizSelect.selectedIndex = 0;
+      }
+
+      loadSavedBtn.disabled = false;
+      deleteSavedBtn.disabled = false;
     }
 
     // ------- Plain/simple format parser (fallback) -------
@@ -528,7 +647,6 @@
 
           qPart = qPart.trim();
           if (!qPart.startsWith('"') || !qPart.endsWith('"')) {
-            // Best-effort fix
             const trimmed = qPart.trim();
             if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
               qPart = trimmed;
@@ -668,10 +786,32 @@
         currentIndex++;
         renderQuestion();
       } else {
-        feedbackEl.textContent = 'End of quiz. Re-upload your file to reshuffle or restart.';
+        feedbackEl.textContent = 'End of quiz. Re-upload your file or select a saved quiz to restart and reshuffle.';
         feedbackEl.className = 'feedback';
         nextBtn.disabled = true;
       }
+    }
+
+    function loadQuizFromSaved(id) {
+      const quiz = savedQuizzes[id];
+      if (!quiz || !Array.isArray(quiz.questions) || !quiz.questions.length) {
+        showEmptyState('This saved quiz has no valid questions.');
+        questionCountEl.textContent = 'No questions loaded.';
+        fileStatusEl.textContent = '';
+        questions = [];
+        resetQuizState();
+        return;
+      }
+
+      currentQuizId = id;
+      const baseQuestions = cloneQuestions(quiz.questions);
+      questions = shuffle(baseQuestions);
+      resetQuizState();
+      questionCountEl.textContent = `${questions.length} questions loaded.`;
+      fileStatusEl.textContent = `Loaded saved quiz: "${quiz.name || 'Untitled quiz'}"`;
+      quizNameInput.value = quiz.name || '';
+      showQuiz();
+      refreshSavedQuizSelect();
     }
 
     fileInput.addEventListener('change', (event) => {
@@ -690,18 +830,55 @@
             parsed = parsePlainQuestions(text);
           }
 
-          questions = shuffle(parsed);
-          resetQuizState();
-
-          if (!questions.length) {
+          if (!parsed.length) {
+            questions = [];
+            resetQuizState();
             questionCountEl.textContent = 'No valid questions found.';
             fileStatusEl.textContent = 'Check that your file has MQF-style QUESTION/ANSWER columns or simple CSV lines.';
             showEmptyState('No valid questions found. Adjust your file and try again.');
             return;
           }
 
+          const baseQuestions = cloneQuestions(parsed);
+
+          const nameFromInput = quizNameInput.value.trim();
+          const defaultName = file.name ? file.name.replace(/\.[^/.]+$/, '') : '';
+          const quizName = nameFromInput || defaultName || 'Quiz ' + new Date().toLocaleString();
+
+          let existingId = null;
+          for (const [id, qz] of Object.entries(savedQuizzes)) {
+            if ((qz.name || '').toLowerCase() === quizName.toLowerCase()) {
+              existingId = id;
+              break;
+            }
+          }
+
+          if (existingId) {
+            savedQuizzes[existingId].questions = baseQuestions;
+            savedQuizzes[existingId].name = quizName;
+            savedQuizzes[existingId].updatedAt = Date.now();
+            currentQuizId = existingId;
+          } else {
+            const newId = 'quiz_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            savedQuizzes[newId] = {
+              name: quizName,
+              questions: baseQuestions,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+            currentQuizId = newId;
+          }
+
+          saveSavedQuizzes();
+          refreshSavedQuizSelect();
+
+          questions = shuffle(cloneQuestions(baseQuestions));
+          resetQuizState();
+
           questionCountEl.textContent = `${questions.length} questions loaded.`;
-          fileStatusEl.textContent = `Source: ${file.name}`;
+          fileStatusEl.textContent = `Loaded from file: ${file.name} · Saved as "${quizName}"`;
+          quizNameInput.value = quizName;
+
           showQuiz();
         } catch (err) {
           console.error(err);
@@ -715,8 +892,43 @@
       reader.readAsText(file);
     });
 
+    loadSavedBtn.addEventListener('click', () => {
+      const id = savedQuizSelect.value;
+      if (!id) {
+        showEmptyState('Select a saved quiz from the dropdown.');
+        return;
+      }
+      loadQuizFromSaved(id);
+    });
+
+    deleteSavedBtn.addEventListener('click', () => {
+      const id = savedQuizSelect.value;
+      if (!id || !savedQuizzes[id]) return;
+
+      const quizName = savedQuizzes[id].name || 'this quiz';
+      const confirmDelete = window.confirm(`Delete "${quizName}" from this browser? This cannot be undone.`);
+      if (!confirmDelete) return;
+
+      delete savedQuizzes[id];
+      saveSavedQuizzes();
+
+      if (currentQuizId === id) {
+        currentQuizId = null;
+        questions = [];
+        resetQuizState();
+        questionCountEl.textContent = 'No questions loaded.';
+        fileStatusEl.textContent = '';
+        showEmptyState('Quiz deleted. Upload a new file or choose another saved quiz.');
+      }
+
+      refreshSavedQuizSelect();
+    });
+
     checkBtn.addEventListener('click', handleCheckAnswer);
     nextBtn.addEventListener('click', handleNextQuestion);
+
+    // Initial population of saved quizzes on load
+    refreshSavedQuizSelect();
   </script>
 </body>
 </html>
