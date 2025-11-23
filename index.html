@@ -371,7 +371,9 @@
     </section>
   </div>
 
-  <script>
+  <script type="module">
+    import { initSavedQuizControls } from './quizStorage.js';
+
     const fileInput = document.getElementById('fileInput');
     const quizNameInput = document.getElementById('quizNameInput');
     const questionCountEl = document.getElementById('questionCount');
@@ -399,9 +401,6 @@
     let score = 0;
     let answeredCount = 0;
     let hasAnsweredCurrent = false;
-
-    const STORAGE_KEY = 'quizBuilder_savedQuizzes_v1';
-    let savedQuizzes = loadSavedQuizzes();
     let currentQuizId = null;
 
     function shuffle(array) {
@@ -413,73 +412,12 @@
     }
 
     function cloneQuestions(qs) {
+      if (!Array.isArray(qs)) return [];
       return qs.map(q => ({
         question: q.question,
         options: Array.isArray(q.options) ? [...q.options] : [],
         correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0
       }));
-    }
-
-    function loadSavedQuizzes() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : {};
-      } catch (e) {
-        console.warn('Could not load saved quizzes:', e);
-        return {};
-      }
-    }
-
-    function saveSavedQuizzes() {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(savedQuizzes));
-      } catch (e) {
-        console.warn('Could not save quizzes:', e);
-      }
-    }
-
-    function refreshSavedQuizSelect() {
-      const ids = Object.keys(savedQuizzes);
-      savedQuizSelect.innerHTML = '';
-
-      if (!ids.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'No saved quizzes yet';
-        savedQuizSelect.appendChild(opt);
-        loadSavedBtn.disabled = true;
-        deleteSavedBtn.disabled = true;
-        return;
-      }
-
-      ids.sort((a, b) => {
-        const nameA = (savedQuizzes[a].name || '').toLowerCase();
-        const nameB = (savedQuizzes[b].name || '').toLowerCase();
-        return nameA.localeCompare(nameB);
-      });
-
-      let hasSelection = false;
-
-      ids.forEach(id => {
-        const quiz = savedQuizzes[id];
-        const opt = document.createElement('option');
-        opt.value = id;
-        opt.textContent = quiz.name || 'Untitled quiz';
-        if (id === currentQuizId) {
-          opt.selected = true;
-          hasSelection = true;
-        }
-        savedQuizSelect.appendChild(opt);
-      });
-
-      if (!hasSelection) {
-        savedQuizSelect.selectedIndex = 0;
-      }
-
-      loadSavedBtn.disabled = false;
-      deleteSavedBtn.disabled = false;
     }
 
     // ------- Plain/simple format parser (fallback) -------
@@ -792,27 +730,23 @@
       }
     }
 
-    function loadQuizFromSaved(id) {
-      const quiz = savedQuizzes[id];
-      if (!quiz || !Array.isArray(quiz.questions) || !quiz.questions.length) {
-        showEmptyState('This saved quiz has no valid questions.');
-        questionCountEl.textContent = 'No questions loaded.';
-        fileStatusEl.textContent = '';
-        questions = [];
+    // ---- Storage module wiring ----
+    const storage = initSavedQuizControls({
+      storageKey: 'quizBuilder_savedQuizzes_v1',
+      selectElement: savedQuizSelect,
+      loadButton: loadSavedBtn,
+      deleteButton: deleteSavedBtn,
+      onLoad: ({ id, quiz }) => {
+        currentQuizId = id;
+        const baseQuestions = cloneQuestions(quiz.questions || []);
+        questions = shuffle(baseQuestions);
         resetQuizState();
-        return;
+        questionCountEl.textContent = `${questions.length} questions loaded.`;
+        fileStatusEl.textContent = `Loaded saved quiz: "${quiz.name || 'Untitled quiz'}"`;
+        quizNameInput.value = quiz.name || '';
+        showQuiz();
       }
-
-      currentQuizId = id;
-      const baseQuestions = cloneQuestions(quiz.questions);
-      questions = shuffle(baseQuestions);
-      resetQuizState();
-      questionCountEl.textContent = `${questions.length} questions loaded.`;
-      fileStatusEl.textContent = `Loaded saved quiz: "${quiz.name || 'Untitled quiz'}"`;
-      quizNameInput.value = quiz.name || '';
-      showQuiz();
-      refreshSavedQuizSelect();
-    }
+    });
 
     fileInput.addEventListener('change', (event) => {
       const file = event.target.files && event.target.files[0];
@@ -845,33 +779,12 @@
           const defaultName = file.name ? file.name.replace(/\.[^/.]+$/, '') : '';
           const quizName = nameFromInput || defaultName || 'Quiz ' + new Date().toLocaleString();
 
-          let existingId = null;
-          for (const [id, qz] of Object.entries(savedQuizzes)) {
-            if ((qz.name || '').toLowerCase() === quizName.toLowerCase()) {
-              existingId = id;
-              break;
-            }
-          }
+          const quizId = storage.saveQuiz({
+            name: quizName,
+            questions: baseQuestions
+          });
 
-          if (existingId) {
-            savedQuizzes[existingId].questions = baseQuestions;
-            savedQuizzes[existingId].name = quizName;
-            savedQuizzes[existingId].updatedAt = Date.now();
-            currentQuizId = existingId;
-          } else {
-            const newId = 'quiz_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-            savedQuizzes[newId] = {
-              name: quizName,
-              questions: baseQuestions,
-              createdAt: Date.now(),
-              updatedAt: Date.now()
-            };
-            currentQuizId = newId;
-          }
-
-          saveSavedQuizzes();
-          refreshSavedQuizSelect();
-
+          currentQuizId = quizId;
           questions = shuffle(cloneQuestions(baseQuestions));
           resetQuizState();
 
@@ -892,43 +805,8 @@
       reader.readAsText(file);
     });
 
-    loadSavedBtn.addEventListener('click', () => {
-      const id = savedQuizSelect.value;
-      if (!id) {
-        showEmptyState('Select a saved quiz from the dropdown.');
-        return;
-      }
-      loadQuizFromSaved(id);
-    });
-
-    deleteSavedBtn.addEventListener('click', () => {
-      const id = savedQuizSelect.value;
-      if (!id || !savedQuizzes[id]) return;
-
-      const quizName = savedQuizzes[id].name || 'this quiz';
-      const confirmDelete = window.confirm(`Delete "${quizName}" from this browser? This cannot be undone.`);
-      if (!confirmDelete) return;
-
-      delete savedQuizzes[id];
-      saveSavedQuizzes();
-
-      if (currentQuizId === id) {
-        currentQuizId = null;
-        questions = [];
-        resetQuizState();
-        questionCountEl.textContent = 'No questions loaded.';
-        fileStatusEl.textContent = '';
-        showEmptyState('Quiz deleted. Upload a new file or choose another saved quiz.');
-      }
-
-      refreshSavedQuizSelect();
-    });
-
     checkBtn.addEventListener('click', handleCheckAnswer);
     nextBtn.addEventListener('click', handleNextQuestion);
-
-    // Initial population of saved quizzes on load
-    refreshSavedQuizSelect();
   </script>
 </body>
 </html>
