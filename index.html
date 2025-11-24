@@ -710,17 +710,25 @@
     }
 
     function handleNextQuestion() {
-      if (!questions.length) return;
+  if (!questions.length) return;
 
-      if (currentIndex < questions.length - 1) {
-        currentIndex++;
-        renderQuestion();
-      } else {
-        feedbackEl.textContent = 'End of quiz. Re-upload your file or select a saved quiz to restart and reshuffle.';
-        feedbackEl.className = 'feedback';
-        nextBtn.disabled = true;
-      }
-    }
+  // Require an answer before moving on
+  const selected = document.querySelector('input[name="option"]:checked');
+  if (!selected) {
+    feedbackEl.textContent = 'Choose an answer first.';
+    feedbackEl.className = 'feedback incorrect';
+    return;
+  }
+
+  if (currentIndex < questions.length - 1) {
+    currentIndex++;
+    renderQuestion();
+  } else {
+    feedbackEl.textContent = 'End of quiz. Re-upload your file or select a saved quiz to restart and reshuffle.';
+    feedbackEl.className = 'feedback';
+    nextBtn.disabled = true;
+  }
+}
 
     // ---- Storage module wiring ----
     const storage = initSavedQuizControls({
